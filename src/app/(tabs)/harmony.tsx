@@ -22,7 +22,7 @@ const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const MAX_BUBBLE_WIDTH = SCREEN_WIDTH * 0.75;
 
 // Change this to your machine's local IP when running on a real device
-const API_BASE = 'http://192.168.1.67:5001';
+const API_BASE = 'http://147.182.194.40:5001';
 
 type Message = {
   id: string;
