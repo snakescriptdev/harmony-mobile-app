@@ -457,7 +457,7 @@ const styles = StyleSheet.create({
     paddingBottom: 8,
   },
   chatBottomSpacer: {
-    height: 16,
+    height: 24,
   },
 
   /* Bot Messages */
