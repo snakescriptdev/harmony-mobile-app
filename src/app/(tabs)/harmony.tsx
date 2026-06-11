@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useCallback, useEffect } from 'react';
 import {
   View,
   Text,
@@ -9,25 +9,232 @@ import {
   KeyboardAvoidingView,
   Platform,
   Dimensions,
+  Animated,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
+import { useRouter } from 'expo-router';
 import { Colors } from '@/constants/Colors';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const MAX_BUBBLE_WIDTH = SCREEN_WIDTH * 0.75;
 
+// Change this to your machine's local IP when running on a real device
+const API_BASE = 'http://192.168.1.67:5001';
+
+type Message = {
+  id: string;
+  role: 'user' | 'assistant';
+  content: string;
+  showConfirm?: boolean;
+};
+
+const INITIAL_MESSAGES: Message[] = [
+  {
+    id: 'welcome',
+    role: 'assistant',
+    content: "Hi, I'm Harmony. How can I help you today?",
+  },
+];
+
+const SUGGESTION_CHIPS = ['Combine Multiple Orders', 'Create Group Order', 'Join Nearby Orders'];
+
+function TypingIndicator() {
+  const dots = [useRef(new Animated.Value(0)).current, useRef(new Animated.Value(0)).current, useRef(new Animated.Value(0)).current];
+
+  useEffect(() => {
+    const bounce = (dot: Animated.Value, delay: number) =>
+      Animated.loop(
+        Animated.sequence([
+          Animated.delay(delay),
+          Animated.timing(dot, { toValue: -6, duration: 280, useNativeDriver: true }),
+          Animated.timing(dot, { toValue: 0, duration: 280, useNativeDriver: true }),
+          Animated.delay(600),
+        ])
+      );
+
+    const anims = [bounce(dots[0], 0), bounce(dots[1], 160), bounce(dots[2], 320)];
+    anims.forEach((a) => a.start());
+    return () => anims.forEach((a) => a.stop());
+  }, []);
+
+  return (
+    <View style={styles.botRow}>
+      <LinearGradient
+        colors={[Colors.gradientStart, Colors.gradientEnd]}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 1 }}
+        style={styles.botAvatar}
+      >
+        <Ionicons name="sparkles" size={12} color="#FFFFFF" />
+      </LinearGradient>
+      <View style={[styles.botBubble, styles.typingBubble]}>
+        {dots.map((dot, i) => (
+          <Animated.View
+            key={i}
+            style={[styles.typingDot, { transform: [{ translateY: dot }] }]}
+          />
+        ))}
+      </View>
+    </View>
+  );
+}
+
 export default function HarmonyScreen() {
+  const router = useRouter();
+  const [chatStarted, setChatStarted] = useState(false);
+  const [messages, setMessages] = useState<Message[]>(INITIAL_MESSAGES);
   const [inputText, setInputText] = useState('');
+  const [streaming, setStreaming] = useState(false);
   const scrollViewRef = useRef<ScrollView>(null);
+  const streamingContentRef = useRef('');
+
+  if (!chatStarted) {
+    return (
+      <SafeAreaView style={styles.container} edges={['top']}>
+        <View style={styles.landingWrap}>
+          {/* Avatar */}
+          <LinearGradient
+            colors={[Colors.gradientStart, Colors.gradientEnd]}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={styles.landingAvatar}
+          >
+            <Ionicons name="sparkles" size={36} color="#FFFFFF" />
+          </LinearGradient>
+
+          <Text style={styles.landingTitle}>Harmony</Text>
+          <Text style={styles.landingSubtitle}>Your AI delivery assistant</Text>
+
+          {/* Feature highlights */}
+          <View style={styles.landingFeatures}>
+            {[
+              { icon: 'layers-outline' as const, label: 'Combine Multiple Orders' },
+              { icon: 'people-outline' as const, label: 'Create Group Orders' },
+              { icon: 'git-merge-outline' as const, label: 'Join Nearby Routes' },
+            ].map((f) => (
+              <View key={f.label} style={styles.landingFeatureRow}>
+                <LinearGradient
+                  colors={[Colors.gradientStart, Colors.gradientEnd]}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 1 }}
+                  style={styles.landingFeatureIcon}
+                >
+                  <Ionicons name={f.icon} size={16} color="#FFFFFF" />
+                </LinearGradient>
+                <Text style={styles.landingFeatureLabel}>{f.label}</Text>
+              </View>
+            ))}
+          </View>
+
+          {/* CTA */}
+          <TouchableOpacity
+            activeOpacity={0.85}
+            style={styles.startButtonWrap}
+            onPress={() => setChatStarted(true)}
+          >
+            <LinearGradient
+              colors={[Colors.gradientStart, Colors.gradientEnd]}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 0 }}
+              style={styles.startButton}
+            >
+              <Ionicons name="chatbubble-ellipses-outline" size={18} color="#FFFFFF" />
+              <Text style={styles.startButtonText}>Start Chatting</Text>
+            </LinearGradient>
+          </TouchableOpacity>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  const scrollToBottom = useCallback(() => {
+    setTimeout(() => scrollViewRef.current?.scrollToEnd({ animated: true }), 50);
+  }, []);
+
+  const sendMessage = (text: string) => {
+    const trimmed = text.trim();
+    if (!trimmed || streaming) return;
+
+    const userMsg: Message = {
+      id: Date.now().toString(),
+      role: 'user',
+      content: trimmed,
+    };
+
+    const updatedMessages = [...messages, userMsg];
+    setMessages(updatedMessages);
+    setInputText('');
+    setStreaming(true);
+    scrollToBottom();
+
+    // Insert an empty bot bubble immediately — we'll stream text into it
+    const botMsgId = `bot-${Date.now()}`;
+    streamingContentRef.current = '';
+    setMessages((prev) => [...prev, { id: botMsgId, role: 'assistant', content: '' }]);
+
+    const apiMessages = updatedMessages.map((m) => ({
+      role: m.role,
+      content: m.content,
+    }));
+
+    fetch(`${API_BASE}/api/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messages: apiMessages }),
+    })
+      .then((res) => {
+        if (!res.ok) throw new Error(`Server error: ${res.status}`);
+        return res.json();
+      })
+      .then((data: { reply: string }) => {
+        const raw = data.reply;
+        const showConfirm = raw.includes('[CONFIRM_ORDER]');
+        const fullText = raw.replace('[CONFIRM_ORDER]', '').trimEnd();
+        let charIndex = 0;
+
+        // Reveal 2 characters every 18ms — feels like real LLM streaming (~110 chars/sec)
+        const timer = setInterval(() => {
+          charIndex = Math.min(charIndex + 2, fullText.length);
+          const snapshot = fullText.slice(0, charIndex);
+          setMessages((prev) =>
+            prev.map((m) => (m.id === botMsgId ? { ...m, content: snapshot } : m))
+          );
+          scrollToBottom();
+          if (charIndex >= fullText.length) {
+            clearInterval(timer);
+            if (showConfirm) {
+              setMessages((prev) =>
+                prev.map((m) => (m.id === botMsgId ? { ...m, showConfirm: true } : m))
+              );
+            }
+            setStreaming(false);
+          }
+        }, 18);
+      })
+      .catch(() => {
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === botMsgId
+              ? { ...m, content: "Sorry, I'm having trouble connecting right now. Please try again." }
+              : m
+          )
+        );
+        setStreaming(false);
+      });
+  };
+
+  const handleChipPress = (chip: string) => {
+    sendMessage(chip);
+  };
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
       {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity style={styles.backButton}>
+        <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
           <Ionicons name="chevron-back" size={24} color={Colors.text} />
         </TouchableOpacity>
         <View style={styles.headerCenter}>
@@ -59,163 +266,85 @@ export default function HarmonyScreen() {
           contentContainerStyle={styles.chatContent}
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
+          onContentSizeChange={scrollToBottom}
         >
-          {/* Bot Message 1 */}
-          <View style={styles.botRow}>
-            <LinearGradient
-              colors={[Colors.gradientStart, Colors.gradientEnd]}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 1 }}
-              style={styles.botAvatar}
-            >
-              <Ionicons name="sparkles" size={12} color="#FFFFFF" />
-            </LinearGradient>
-            <View style={styles.botBubble}>
-              <Text style={styles.botText}>
-                Hi, I'm Harmony. How can I help you today?
-              </Text>
-            </View>
-          </View>
-
-          {/* Suggestion Chips */}
-          <View style={styles.chipsContainer}>
-            {['Combine Multiple Orders', 'Create Group Order', 'Join Nearby Orders'].map(
-              (chip) => (
-                <TouchableOpacity key={chip} style={styles.chip}>
-                  <Text style={styles.chipText}>{chip}</Text>
-                </TouchableOpacity>
-              )
-            )}
-          </View>
-
-          {/* User Message */}
-          <View style={styles.userRow}>
-            <LinearGradient
-              colors={[Colors.gradientStart, Colors.gradientEnd]}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 0 }}
-              style={styles.userBubble}
-            >
-              <Text style={styles.userText}>
-                I want coffee & dates from Barn's, and soup & sambousa from
-                Mastoor.
-              </Text>
-            </LinearGradient>
-          </View>
-
-          {/* Bot Message 2 */}
-          <View style={styles.botRow}>
-            <LinearGradient
-              colors={[Colors.gradientStart, Colors.gradientEnd]}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 1 }}
-              style={styles.botAvatar}
-            >
-              <Ionicons name="sparkles" size={12} color="#FFFFFF" />
-            </LinearGradient>
-            <View style={styles.botBubble}>
-              <Text style={styles.botText}>
-                I found orders from two different stores. I can combine them into
-                one delivery trip.
-              </Text>
-            </View>
-          </View>
-
-          {/* Bot Message 3 — Action Card */}
-          <View style={styles.botRow}>
-            <LinearGradient
-              colors={[Colors.gradientStart, Colors.gradientEnd]}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 1 }}
-              style={styles.botAvatar}
-            >
-              <Ionicons name="sparkles" size={12} color="#FFFFFF" />
-            </LinearGradient>
-            <View style={styles.actionCard}>
-              <Text style={styles.actionCardTitle}>Combined Order</Text>
-
-              <View style={styles.restaurantItem}>
-                <Ionicons
-                  name="restaurant-outline"
-                  size={16}
-                  color={Colors.primary}
-                />
-                <Text style={styles.restaurantText}>
-                  <Text style={styles.restaurantName}>Barn's</Text> — Arabic
-                  Coffee, Dates
-                </Text>
-              </View>
-
-              <View style={styles.restaurantItem}>
-                <Ionicons
-                  name="restaurant-outline"
-                  size={16}
-                  color={Colors.primary}
-                />
-                <Text style={styles.restaurantText}>
-                  <Text style={styles.restaurantName}>Mastoor</Text> — Lentil
-                  Soup, Sambousa
-                </Text>
-              </View>
-
-              <View style={styles.divider} />
-
-              {['Single Checkout', 'Optimized Route', 'Save 8 SAR on delivery'].map(
-                (benefit) => (
-                  <View key={benefit} style={styles.benefitRow}>
-                    <Ionicons
-                      name="checkmark-circle"
-                      size={18}
-                      color={Colors.success}
-                    />
-                    <Text style={styles.benefitText}>{benefit}</Text>
+          {messages.map((msg, index) => {
+            if (msg.role === 'assistant') {
+              // Empty content means the TypingIndicator is handling this slot
+              if (!msg.content) return null;
+              return (
+                <View key={msg.id}>
+                  <View style={styles.botRow}>
+                    <LinearGradient
+                      colors={[Colors.gradientStart, Colors.gradientEnd]}
+                      start={{ x: 0, y: 0 }}
+                      end={{ x: 1, y: 1 }}
+                      style={styles.botAvatar}
+                    >
+                      <Ionicons name="sparkles" size={12} color="#FFFFFF" />
+                    </LinearGradient>
+                    <View style={styles.botBubble}>
+                      <Text style={styles.botText}>{msg.content}</Text>
+                    </View>
                   </View>
-                )
-              )}
 
-              <TouchableOpacity
-                style={styles.combineButton}
-                activeOpacity={0.85}
-              >
+                  {/* Show chips only after first welcome message */}
+                  {index === 0 && (
+                    <View style={styles.chipsContainer}>
+                      {SUGGESTION_CHIPS.map((chip) => (
+                        <TouchableOpacity
+                          key={chip}
+                          style={styles.chip}
+                          onPress={() => handleChipPress(chip)}
+                        >
+                          <Text style={styles.chipText}>{chip}</Text>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                  )}
+
+                  {/* Confirm Order button */}
+                  {msg.showConfirm && (
+                    <TouchableOpacity
+                      style={styles.confirmButtonWrap}
+                      activeOpacity={0.85}
+                      onPress={() => router.push('/combine-orders')}
+                    >
+                      <LinearGradient
+                        colors={[Colors.gradientStart, Colors.gradientEnd]}
+                        start={{ x: 0, y: 0 }}
+                        end={{ x: 1, y: 0 }}
+                        style={styles.confirmButton}
+                      >
+                        <Ionicons name="layers" size={16} color="#FFFFFF" />
+                        <Text style={styles.confirmButtonText}>Confirm Order</Text>
+                      </LinearGradient>
+                    </TouchableOpacity>
+                  )}
+                </View>
+              );
+            }
+
+            return (
+              <View key={msg.id} style={styles.userRow}>
                 <LinearGradient
                   colors={[Colors.gradientStart, Colors.gradientEnd]}
                   start={{ x: 0, y: 0 }}
                   end={{ x: 1, y: 0 }}
-                  style={styles.combineButtonGradient}
+                  style={styles.userBubble}
                 >
-                  <Text style={styles.combineButtonText}>Combine Orders</Text>
+                  <Text style={styles.userText}>{msg.content}</Text>
                 </LinearGradient>
-              </TouchableOpacity>
-            </View>
-          </View>
+              </View>
+            );
+          })}
 
-          {/* Bottom spacing for alert banner */}
+          {streaming && messages[messages.length - 1]?.content === '' && (
+            <TypingIndicator />
+          )}
+
           <View style={styles.chatBottomSpacer} />
         </ScrollView>
-
-        {/* Proactive Alert Banner */}
-        <LinearGradient
-          colors={[Colors.gradientStart, Colors.gradientEnd]}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 0 }}
-          style={styles.alertBanner}
-        >
-          <View style={styles.alertTop}>
-            <View style={styles.alertIconRow}>
-              <View style={styles.alertIcon}>
-                <Ionicons name="sparkles" size={12} color={Colors.primary} />
-              </View>
-              <Text style={styles.alertLabel}>Proactive Alert</Text>
-            </View>
-            <TouchableOpacity style={styles.joinButton} activeOpacity={0.8}>
-              <Text style={styles.joinButtonText}>Join the Route</Text>
-            </TouchableOpacity>
-          </View>
-          <Text style={styles.alertMessage}>
-            3 orders near you from the same restaurant. Join the route and save
-            12 SAR!
-          </Text>
-        </LinearGradient>
 
         {/* Input Area */}
         <View style={styles.inputContainer}>
@@ -228,13 +357,13 @@ export default function HarmonyScreen() {
               onChangeText={setInputText}
               multiline
               returnKeyType="default"
+              onSubmitEditing={() => sendMessage(inputText)}
             />
             <TouchableOpacity
-              style={[
-                styles.sendButton,
-                inputText.trim() ? styles.sendButtonActive : null,
-              ]}
+              style={[styles.sendButton, inputText.trim() ? styles.sendButtonActive : null]}
               activeOpacity={0.7}
+              onPress={() => sendMessage(inputText)}
+              disabled={streaming}
             >
               <Ionicons
                 name="arrow-up"
@@ -354,6 +483,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 10,
     maxWidth: MAX_BUBBLE_WIDTH,
+    minWidth: 48,
   },
   botText: {
     fontSize: 15,
@@ -402,122 +532,6 @@ const styles = StyleSheet.create({
     color: Colors.primary,
   },
 
-  /* Action Card */
-  actionCard: {
-    backgroundColor: Colors.card,
-    borderRadius: 16,
-    padding: 16,
-    maxWidth: MAX_BUBBLE_WIDTH,
-    borderWidth: 1,
-    borderColor: Colors.cardBorder,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.06,
-    shadowRadius: 8,
-    elevation: 3,
-  },
-  actionCardTitle: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: Colors.text,
-    marginBottom: 12,
-  },
-  restaurantItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 8,
-  },
-  restaurantText: {
-    fontSize: 14,
-    color: Colors.textSecondary,
-    marginLeft: 8,
-    flex: 1,
-  },
-  restaurantName: {
-    fontWeight: '700',
-    color: Colors.text,
-  },
-  divider: {
-    height: 1,
-    backgroundColor: Colors.cardBorder,
-    marginVertical: 12,
-  },
-  benefitRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 6,
-  },
-  benefitText: {
-    fontSize: 14,
-    color: Colors.text,
-    marginLeft: 8,
-    fontWeight: '500',
-  },
-  combineButton: {
-    marginTop: 14,
-    borderRadius: 12,
-    overflow: 'hidden',
-  },
-  combineButtonGradient: {
-    paddingVertical: 12,
-    alignItems: 'center',
-    borderRadius: 12,
-  },
-  combineButtonText: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: Colors.textLight,
-  },
-
-  /* Proactive Alert Banner */
-  alertBanner: {
-    marginHorizontal: 16,
-    marginBottom: 8,
-    borderRadius: 14,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-  },
-  alertTop: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 6,
-  },
-  alertIconRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  alertIcon: {
-    width: 22,
-    height: 22,
-    borderRadius: 11,
-    backgroundColor: '#FFFFFF',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 8,
-  },
-  alertLabel: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: Colors.textLight,
-  },
-  joinButton: {
-    backgroundColor: 'rgba(255,255,255,0.25)',
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-  },
-  joinButtonText: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: Colors.textLight,
-  },
-  alertMessage: {
-    fontSize: 13,
-    lineHeight: 18,
-    color: 'rgba(255,255,255,0.92)',
-  },
-
   /* Input Area */
   inputContainer: {
     paddingHorizontal: 16,
@@ -554,5 +568,111 @@ const styles = StyleSheet.create({
   },
   sendButtonActive: {
     backgroundColor: Colors.primary,
+  },
+
+  confirmButtonWrap: {
+    marginLeft: 36,
+    marginTop: 6,
+    marginBottom: 4,
+    borderRadius: 14,
+    overflow: 'hidden',
+    alignSelf: 'flex-start',
+  },
+  confirmButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 18,
+    paddingVertical: 12,
+    borderRadius: 14,
+  },
+  confirmButtonText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+
+  typingBubble: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    gap: 5,
+    minWidth: 64,
+  },
+  typingDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: Colors.textTertiary,
+  },
+
+  /* Landing screen */
+  landingWrap: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 32,
+    gap: 0,
+  },
+  landingAvatar: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 20,
+  },
+  landingTitle: {
+    fontSize: 32,
+    fontWeight: '800',
+    color: Colors.text,
+    letterSpacing: -0.5,
+    marginBottom: 8,
+  },
+  landingSubtitle: {
+    fontSize: 16,
+    color: Colors.textSecondary,
+    marginBottom: 40,
+  },
+  landingFeatures: {
+    width: '100%',
+    gap: 14,
+    marginBottom: 48,
+  },
+  landingFeatureRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 14,
+  },
+  landingFeatureIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  landingFeatureLabel: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: Colors.text,
+  },
+  startButtonWrap: {
+    width: '100%',
+    borderRadius: 16,
+    overflow: 'hidden',
+  },
+  startButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 16,
+    gap: 10,
+    borderRadius: 16,
+  },
+  startButtonText: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#FFFFFF',
   },
 });

@@ -105,7 +105,7 @@ export default function GroupOrderScreen() {
           <View style={styles.linkRow}>
             <View style={styles.linkField}>
               <Ionicons name="link-outline" size={16} color={Colors.textTertiary} />
-              <Text style={styles.linkText}>caravan.app/g/family-6</Text>
+              <Text style={styles.linkText}>harmony.app/g/family-6</Text>
             </View>
             <Pressable style={styles.copyButton}>
               <Text style={styles.copyButtonText}>Copy</Text>

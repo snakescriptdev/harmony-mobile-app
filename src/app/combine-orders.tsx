@@ -269,6 +269,7 @@ function RestaurantCard({ restaurant, index }: { restaurant: Restaurant; index: 
 
 export default function CombineOrdersScreen() {
   const router = useRouter();
+  const [orderPlaced, setOrderPlaced] = React.useState(false);
 
   const totalSubtotal = RESTAURANTS.reduce((sum, r) => sum + getSubtotal(r), 0);
   const originalDelivery = 45;
@@ -356,17 +357,27 @@ export default function CombineOrdersScreen() {
 
       {/* Bottom Button */}
       <Animated.View entering={FadeInDown.delay(1000).duration(500)} style={styles.bottomBar}>
-        <Pressable style={({ pressed }) => [pressed && { opacity: 0.9, transform: [{ scale: 0.98 }] }]}>
-          <LinearGradient
-            colors={[Colors.gradientStart, Colors.gradientEnd]}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 0 }}
-            style={styles.placeOrderButton}
+        {orderPlaced ? (
+          <View style={styles.successBanner}>
+            <Ionicons name="checkmark-circle" size={24} color={Colors.green} />
+            <Text style={styles.successText}>Order Combined Successfully!</Text>
+          </View>
+        ) : (
+          <Pressable
+            onPress={() => setOrderPlaced(true)}
+            style={({ pressed }) => [pressed && { opacity: 0.9, transform: [{ scale: 0.98 }] }]}
           >
-            <Ionicons name="layers" size={20} color={Colors.textLight} />
-            <Text style={styles.placeOrderText}>Place Combined Order</Text>
-          </LinearGradient>
-        </Pressable>
+            <LinearGradient
+              colors={[Colors.gradientStart, Colors.gradientEnd]}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 0 }}
+              style={styles.placeOrderButton}
+            >
+              <Ionicons name="layers" size={20} color={Colors.textLight} />
+              <Text style={styles.placeOrderText}>Place Combined Order</Text>
+            </LinearGradient>
+          </Pressable>
+        )}
       </Animated.View>
     </SafeAreaView>
   );
@@ -656,5 +667,21 @@ const styles = StyleSheet.create({
     fontSize: 17,
     fontWeight: '700',
     color: Colors.textLight,
+  },
+  successBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 10,
+    height: 56,
+    borderRadius: 16,
+    backgroundColor: Colors.green + '18',
+    borderWidth: 1.5,
+    borderColor: Colors.green,
+  },
+  successText: {
+    fontSize: 17,
+    fontWeight: '700',
+    color: Colors.green,
   },
 });

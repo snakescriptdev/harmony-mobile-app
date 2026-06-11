@@ -1,15 +1,15 @@
 {
   "expo": {
     "name": "Harmony",
-    "slug": "Caravan",
+    "slug": "Harmony",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/harmony-icon.jpeg",
-    "scheme": "caravan",
+    "scheme": "harmony",
     "userInterfaceStyle": "light",
     "ios": {
       "icon": "./assets/expo.icon",
-      "bundleIdentifier": "com.shakirsadiq.Caravan"
+      "bundleIdentifier": "com.shakirsadiq.Harmony"
     },
     "android": {
       "adaptiveIcon": {
